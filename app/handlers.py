@@ -1,4 +1,4 @@
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram import Update
 from telegram.ext import ContextTypes
 from app.database import Database
 from app.config import Config
@@ -15,26 +15,96 @@ def is_admin(user_id: int, config: Config) -> bool:
 # ─────────────────────────────────────────────
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     db: Database = ctx.bot_data["db"]
-    src = db.get_setting("source_channel", "غير محدد")
-    dst = db.get_setting("dest_channel", "غير محدد")
+    src = db.get_setting("source_channel", "❌ غير محدد")
+    dst = db.get_setting("dest_channel",   "❌ غير محدد")
     stats = db.get_stats()
 
     text = (
         "🤖 *بوت نسخ القنوات*\n"
         "━━━━━━━━━━━━━━━━━━\n"
-        f"📡 *القناة المصدر:* `{src}`\n"
-        f"📥 *القناة الهدف:* `{dst}`\n"
-        f"📊 *إجمالي المنسوخ:* {stats['total']:,} رسالة\n"
+        f"📡 *المصدر:* `{src}`\n"
+        f"📥 *الهدف:* `{dst}`\n"
+        f"📊 *الإجمالي:* {stats['total']:,} رسالة\n"
         f"📅 *اليوم:* {stats['today']:,} رسالة\n"
         "━━━━━━━━━━━━━━━━━━\n"
-        "الأوامر المتاحة:\n"
-        "/setsource — تعيين القناة المصدر\n"
-        "/setdest — تعيين القناة الهدف\n"
-        "/status — عرض الحالة\n"
+        "*الأوامر:*\n"
+        "/setsource — تعيين المصدر\n"
+        "/setdest — تعيين الهدف\n"
+        "/status — الحالة\n"
         "/stats — الإحصائيات\n"
-        "/help — المساعدة\n"
+        "/help — المساعدة\n\n"
+        "📌 *لتعيين قناة خاصة:*\n"
+        "أضفني مشرفاً في القناة ثم أرسل فيها:\n"
+        "`/setsourceme` — لتعيينها مصدراً\n"
+        "`/setdestme` — لتعيينها هدفاً\n"
     )
     await update.message.reply_text(text, parse_mode="Markdown")
+
+
+# ─────────────────────────────────────────────
+# /chatid — يظهر ID القناة أو المجموعة الحالية
+# ─────────────────────────────────────────────
+async def cmd_chatid(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    msg = update.effective_message
+    chat = update.effective_chat
+    chat_id = chat.id
+    title = getattr(chat, "title", None) or "خاص"
+    username = f"@{chat.username}" if getattr(chat, "username", None) else "لا يوجد"
+
+    text = (
+        f"🆔 *معرّف هذه القناة/المجموعة:*\n"
+        f"`{chat_id}`\n\n"
+        f"📛 الاسم: {title}\n"
+        f"👤 المعرف: {username}\n\n"
+        f"انسخ الرقم أعلاه واستخدمه مع:\n"
+        f"`/setsource {chat_id}`\n"
+        f"`/setdest {chat_id}`"
+    )
+    await msg.reply_text(text, parse_mode="Markdown")
+
+
+# ─────────────────────────────────────────────
+# /setsourceme — يُعيّن القناة الحالية كمصدر
+# ─────────────────────────────────────────────
+async def cmd_set_source_me(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    db: Database = ctx.bot_data["db"]
+    chat = update.effective_chat
+    chat_id = str(chat.id)
+    title = getattr(chat, "title", chat_id)
+
+    db.set_setting("source_channel", chat_id)
+    logger.info(f"📡 تعيين المصدر تلقائياً: {title} ({chat_id})")
+
+    msg = update.effective_message
+    if msg:
+        await msg.reply_text(
+            f"✅ *تم تعيين هذه القناة كمصدر!*\n"
+            f"📛 {title}\n"
+            f"🆔 `{chat_id}`",
+            parse_mode="Markdown"
+        )
+
+
+# ─────────────────────────────────────────────
+# /setdestme — يُعيّن القناة الحالية كهدف
+# ─────────────────────────────────────────────
+async def cmd_set_dest_me(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    db: Database = ctx.bot_data["db"]
+    chat = update.effective_chat
+    chat_id = str(chat.id)
+    title = getattr(chat, "title", chat_id)
+
+    db.set_setting("dest_channel", chat_id)
+    logger.info(f"📥 تعيين الهدف تلقائياً: {title} ({chat_id})")
+
+    msg = update.effective_message
+    if msg:
+        await msg.reply_text(
+            f"✅ *تم تعيين هذه القناة كهدف!*\n"
+            f"📛 {title}\n"
+            f"🆔 `{chat_id}`",
+            parse_mode="Markdown"
+        )
 
 
 # ─────────────────────────────────────────────
@@ -50,16 +120,17 @@ async def cmd_set_source(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     if not ctx.args:
         await update.message.reply_text(
-            "📌 *كيفية الاستخدام:*\n"
-            "`/setsource @username` أو\n"
-            "`/setsource -1001234567890`",
+            "📌 *الاستخدام:*\n"
+            "`/setsource -1001234567890`\n\n"
+            "أو أضفني في القناة وأرسل فيها:\n"
+            "`/setsourceme`",
             parse_mode="Markdown",
         )
         return
 
     channel = ctx.args[0].strip()
     db.set_setting("source_channel", channel)
-    logger.info(f"📡 تم تعيين القناة المصدر: {channel}")
+    logger.info(f"📡 تم تعيين المصدر: {channel}")
     await update.message.reply_text(f"✅ تم تعيين القناة المصدر:\n`{channel}`", parse_mode="Markdown")
 
 
@@ -76,16 +147,17 @@ async def cmd_set_dest(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     if not ctx.args:
         await update.message.reply_text(
-            "📌 *كيفية الاستخدام:*\n"
-            "`/setdest @username` أو\n"
-            "`/setdest -1001234567890`",
+            "📌 *الاستخدام:*\n"
+            "`/setdest -1001234567890`\n\n"
+            "أو أضفني في القناة وأرسل فيها:\n"
+            "`/setdestme`",
             parse_mode="Markdown",
         )
         return
 
     channel = ctx.args[0].strip()
     db.set_setting("dest_channel", channel)
-    logger.info(f"📥 تم تعيين القناة الهدف: {channel}")
+    logger.info(f"📥 تم تعيين الهدف: {channel}")
     await update.message.reply_text(f"✅ تم تعيين القناة الهدف:\n`{channel}`", parse_mode="Markdown")
 
 
@@ -95,20 +167,20 @@ async def cmd_set_dest(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     db: Database = ctx.bot_data["db"]
     src = db.get_setting("source_channel", "❌ غير محدد")
-    dst = db.get_setting("dest_channel", "❌ غير محدد")
+    dst = db.get_setting("dest_channel",   "❌ غير محدد")
 
-    src_ok = src != "❌ غير محدد"
-    dst_ok = dst != "❌ غير محدد"
-    ready = "🟢 يعمل" if (src_ok and dst_ok) else "🔴 يحتاج إعداد"
+    src_ok = "❌" not in src
+    dst_ok = "❌" not in dst
+    ready  = "🟢 يعمل" if (src_ok and dst_ok) else "🔴 يحتاج إعداد"
 
-    text = (
+    await update.message.reply_text(
         f"📊 *حالة البوت*\n"
         f"━━━━━━━━━━━━━━\n"
         f"الحالة: {ready}\n"
         f"📡 المصدر: `{src}`\n"
-        f"📥 الهدف: `{dst}`\n"
+        f"📥 الهدف: `{dst}`",
+        parse_mode="Markdown",
     )
-    await update.message.reply_text(text, parse_mode="Markdown")
 
 
 # ─────────────────────────────────────────────
@@ -117,56 +189,63 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cmd_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     db: Database = ctx.bot_data["db"]
     stats = db.get_stats()
-    text = (
+    await update.message.reply_text(
         f"📈 *إحصائيات النسخ*\n"
         f"━━━━━━━━━━━━━━━\n"
         f"📦 الإجمالي: *{stats['total']:,}* رسالة\n"
-        f"📅 اليوم: *{stats['today']:,}* رسالة\n"
+        f"📅 اليوم: *{stats['today']:,}* رسالة",
+        parse_mode="Markdown",
     )
-    await update.message.reply_text(text, parse_mode="Markdown")
 
 
 # ─────────────────────────────────────────────
 # /help
 # ─────────────────────────────────────────────
 async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    text = (
+    await update.message.reply_text(
         "📖 *دليل الاستخدام*\n"
         "━━━━━━━━━━━━━━━━━━\n\n"
-        "*1️⃣ أضف البوت مشرفاً في القناتين*\n"
-        "— القناة المصدر: صلاحية قراءة الرسائل\n"
-        "— القناة الهدف: صلاحية نشر الرسائل\n\n"
-        "*2️⃣ حدد القنوات*\n"
-        "`/setsource @source_channel`\n"
-        "`/setdest @dest_channel`\n\n"
-        "*3️⃣ البوت يعمل تلقائياً!*\n"
-        "كل رسالة جديدة في المصدر تُنسخ فوراً للهدف\n\n"
+        "*الطريقة السهلة (قنوات خاصة):*\n"
+        "1️⃣ أضفني مشرفاً في القناة المصدر\n"
+        "2️⃣ أرسل في تلك القناة: `/setsourceme`\n"
+        "3️⃣ أضفني مشرفاً في القناة الهدف\n"
+        "4️⃣ أرسل في تلك القناة: `/setdestme`\n"
+        "5️⃣ البوت يعمل تلقائياً! 🚀\n\n"
+        "*الطريقة اليدوية (إذا عرفت الـ ID):*\n"
+        "`/setsource -1001234567890`\n"
+        "`/setdest -1001234567891`\n\n"
+        "*معرفة ID أي قناة:*\n"
+        "أضفني فيها وأرسل: `/chatid`\n\n"
         "*الوسائط المدعومة:*\n"
-        "🖼 صور | 🎥 فيديو | 🎵 صوت | 🎤 رسائل صوتية\n"
-        "📄 ملفات | 🎭 ملصقات | 🎞 GIF | 📊 استطلاعات\n"
+        "🖼 صور | 🎥 فيديو | 🎵 صوت\n"
+        "🎤 رسائل صوتية | 📄 ملفات | 🎭 ملصقات\n",
+        parse_mode="Markdown",
     )
-    await update.message.reply_text(text, parse_mode="Markdown")
 
 
 # ─────────────────────────────────────────────
-# معالج الرسائل من القنوات
+# معالج رسائل القنوات
 # ─────────────────────────────────────────────
 async def handle_channel_post(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     db: Database = ctx.bot_data["db"]
-    msg = update.channel_post or update.message
+    msg = update.channel_post
     if not msg:
         return
 
+    # تجاهل أوامر التعيين (تُعالَج بشكل منفصل)
+    if msg.text and msg.text.startswith("/"):
+        return
+
     source_channel = db.get_setting("source_channel")
-    dest_channel = db.get_setting("dest_channel")
+    dest_channel   = db.get_setting("dest_channel")
 
     if not source_channel or not dest_channel:
         return
 
-    chat_id = str(msg.chat_id)
-    chat_username = f"@{msg.chat.username}" if msg.chat.username else None
+    chat_id  = str(msg.chat_id)
+    username = f"@{msg.chat.username}" if msg.chat.username else None
 
-    is_source = (chat_id == source_channel or chat_username == source_channel)
+    is_source = (chat_id == source_channel) or (username and username == source_channel)
     if not is_source:
         return
 
