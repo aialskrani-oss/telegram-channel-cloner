@@ -1,34 +1,22 @@
 services:
-  - type: worker
+  - type: web
     name: telegram-channel-cloner
     env: docker
     dockerfilePath: ./Dockerfile
     plan: free
     autoDeploy: true
     disk:
-      name: cloner-data
+      name: bot-data
       mountPath: /data
       sizeGB: 1
     envVars:
-      - key: API_ID
-        sync: false
-      - key: API_HASH
-        sync: false
-      - key: SESSION_STRING
+      - key: BOT_TOKEN
         sync: false
       - key: SOURCE_CHANNEL
         sync: false
       - key: DESTINATION_CHANNEL
         sync: false
-      - key: BATCH_SIZE
-        value: "50"
-      - key: DELAY_BETWEEN_MESSAGES
-        value: "0.5"
-      - key: DELAY_BETWEEN_BATCHES
-        value: "2.0"
-      - key: MAX_RETRIES
-        value: "5"
-      - key: RETRY_DELAY
-        value: "10.0"
+      - key: ADMIN_IDS
+        sync: false
       - key: DB_PATH
         value: "/data/cloner.db"
