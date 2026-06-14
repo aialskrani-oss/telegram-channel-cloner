@@ -1,105 +1,88 @@
 import asyncio
-import signal
-import sys
 import os
+import sys
 from pathlib import Path
-from telethon import TelegramClient
-from telethon.sessions import StringSession
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    filters,
+)
 from app.config import Config
 from app.database import Database
-from app.sync import ChannelSyncer
 from app.logger import logger
+from app.handlers import (
+    cmd_start, cmd_set_source, cmd_set_dest,
+    cmd_status, cmd_stats, cmd_help,
+    handle_channel_post,
+)
 
 
-def load_env_file():
-    env_file = Path(".env")
-    if env_file.exists():
-        with open(env_file, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    key, _, value = line.partition("=")
-                    os.environ.setdefault(key.strip(), value.strip())
+def load_env():
+    env = Path(".env")
+    if env.exists():
+        for line in env.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, _, v = line.partition("=")
+                os.environ.setdefault(k.strip(), v.strip())
 
 
 def print_banner():
-    banner = """
-╔══════════════════════════════════════════════════════╗
-║      🤖  Telegram Channel Cloner  🤖                 ║
-║      نظام نسخ قنوات تيليجرام الاحترافي             ║
-║      الإصدار 2.0 | بناء احترافي                     ║
-╚══════════════════════════════════════════════════════╝
-    """
-    logger.info(banner)
+    logger.info("╔══════════════════════════════════════════╗")
+    logger.info("║   🤖  بوت نسخ القنوات — Channel Cloner  ║")
+    logger.info("║   النسخة 3.0 | Bot API | مجاني 100٪     ║")
+    logger.info("╚══════════════════════════════════════════╝")
 
 
-async def generate_session(config: Config):
-    logger.info("🔑 جارٍ إنشاء جلسة جديدة...")
-    logger.info("سيُطلب منك رقم الهاتف والرمز التحقق.")
-    async with TelegramClient(StringSession(), config.api_id, config.api_hash) as client:
-        await client.start()
-        session_str = client.session.save()
-        logger.info(f"\n✅ تم إنشاء الجلسة بنجاح!\nأضف هذا إلى متغيرات البيئة:\nSESSION_STRING={session_str}\n")
-        return session_str
-
-
-async def main():
-    load_env_file()
+def main():
+    load_env()
     print_banner()
 
     try:
         config = Config.from_env()
     except ValueError as e:
-        logger.error(f"❌ خطأ في الإعدادات:\n{e}")
+        logger.error(str(e))
         sys.exit(1)
 
-    logger.info(f"🔧 الإعدادات:")
-    logger.info(f"  📡 المصدر: {config.source_channel}")
-    logger.info(f"  📥 الهدف: {config.destination_channel}")
-    logger.info(f"  📦 حجم الدفعة: {config.batch_size}")
-    logger.info(f"  ⏱️  التأخير بين الرسائل: {config.delay_between_messages}ث")
-
-    if not config.session_string:
-        session_str = await generate_session(config)
-        config.session_string = session_str
-
-    os.makedirs(os.path.dirname(config.db_path), exist_ok=True)
     db = Database(config.db_path)
 
-    client = TelegramClient(
-        StringSession(config.session_string),
-        config.api_id,
-        config.api_hash,
-        connection_retries=10,
-        retry_delay=5,
-        auto_reconnect=True,
-        flood_sleep_threshold=60,
+    # تعيين القنوات من متغيرات البيئة إذا وُجدت
+    if config.source_channel:
+        db.set_setting("source_channel", config.source_channel)
+        logger.info(f"📡 المصدر من البيئة: {config.source_channel}")
+    if config.destination_channel:
+        db.set_setting("dest_channel", config.destination_channel)
+        logger.info(f"📥 الهدف من البيئة: {config.destination_channel}")
+
+    app = (
+        Application.builder()
+        .token(config.bot_token)
+        .build()
     )
 
-    syncer = ChannelSyncer(client, config, db)
+    app.bot_data["db"] = db
+    app.bot_data["config"] = config
 
-    def handle_shutdown(signum, frame):
-        logger.info(f"\n🛑 استُلم إشارة الإيقاف ({signum})")
-        syncer.stop()
-        asyncio.get_event_loop().stop()
+    # أوامر الخاص
+    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("setsource", cmd_set_source))
+    app.add_handler(CommandHandler("setdest", cmd_set_dest))
+    app.add_handler(CommandHandler("status", cmd_status))
+    app.add_handler(CommandHandler("stats", cmd_stats))
+    app.add_handler(CommandHandler("help", cmd_help))
 
-    signal.signal(signal.SIGTERM, handle_shutdown)
-    signal.signal(signal.SIGINT, handle_shutdown)
+    # الرسائل الواردة من القنوات
+    app.add_handler(MessageHandler(filters.ChatType.CHANNEL, handle_channel_post))
 
-    logger.info("🚀 جارٍ تشغيل البوت...")
-    try:
-        async with client:
-            me = await client.get_me()
-            logger.info(f"👤 تم تسجيل الدخول كـ: {me.first_name} (@{me.username})")
-            await syncer.run()
-    except KeyboardInterrupt:
-        logger.info("🛑 تم إيقاف البوت بواسطة المستخدم")
-    except Exception as e:
-        logger.error(f"❌ خطأ غير متوقع: {e}", exc_info=True)
-        sys.exit(1)
-    finally:
-        logger.info("👋 انتهى تشغيل البوت")
+    src = db.get_setting("source_channel", "غير محدد")
+    dst = db.get_setting("dest_channel", "غير محدد")
+    logger.info(f"📡 المصدر: {src}")
+    logger.info(f"📥 الهدف: {dst}")
+    logger.info("🚀 البوت يعمل... اضغط Ctrl+C للإيقاف")
+
+    app.run_polling(allowed_updates=["message", "channel_post"])
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
