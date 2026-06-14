@@ -222,12 +222,27 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # ─────────────────────────────────────────────
 async def cmd_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     db: Database = ctx.bot_data["db"]
-    stats = db.get_stats()
+    s = db.get_stats()
+
+    type_icons = {
+        "photo": "🖼", "video": "🎥", "audio": "🎵",
+        "voice": "🎤", "document": "📄", "sticker": "🎭",
+        "animation": "🎞", "text": "💬", "video_note": "📹",
+        "unknown": "❓",
+    }
+    type_lines = ""
+    for t, count in s.get("by_type", {}).items():
+        icon = type_icons.get(t, "📌")
+        type_lines += f"  {icon} {t}: *{count:,}*\n"
+
     await update.message.reply_text(
         f"📈 *إحصائيات النسخ*\n"
         f"━━━━━━━━━━━━━━━\n"
-        f"📦 الإجمالي: *{stats['total']:,}* رسالة\n"
-        f"📅 اليوم: *{stats['today']:,}* رسالة",
+        f"📦 الإجمالي: *{s['total']:,}* رسالة\n"
+        f"📅 اليوم: *{s['today']:,}* رسالة\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"*التفصيل حسب النوع:*\n"
+        f"{type_lines if type_lines else '  لا يوجد بيانات بعد'}",
         parse_mode="Markdown",
     )
 
