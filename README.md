@@ -1,6 +1,7 @@
-# 🤖 Telegram Channel Cloner — نظام نسخ القنوات الاحترافي
+# 🤖 بوت نسخ قنوات تيليجرام
 
-نظام متكامل واحترافي لنسخ محتوى قنوات تيليجرام تلقائياً مع المزامنة الفورية.
+بوت احترافي يُضاف كمشرف في قناتين ويحوّل المحتوى تلقائياً.  
+مجاني 100٪ — لا يحتاج API_ID أو جلسة مستخدم.
 
 ---
 
@@ -8,124 +9,86 @@
 
 | الميزة | الوصف |
 |--------|-------|
-| 📚 نسخ الأرشيف الكامل | نسخ جميع الرسائل السابقة بالترتيب |
-| 🔴 مزامنة مباشرة | نسخ الرسائل الجديدة فور وصولها |
-| 📸 دعم جميع أنواع الوسائط | صور، فيديو، مستندات، صوت، ملصقات |
-| 🔄 استئناف تلقائي | يستأنف من حيث توقف بعد الأعطال |
-| 🚫 منع التكرار | لا يُعاد نسخ رسالة مرتين |
-| 📊 إحصائيات مفصّلة | تتبع دقيق لحالة كل رسالة |
-| ⚡ معالجة الأخطاء | إعادة محاولة تلقائية مع FloodWait |
-| 💾 SQLite للحالة | تتبع مستمر لا يضيع |
+| 🤖 بوت حقيقي | يعمل بـ Bot API بدون حساب مستخدم |
+| 📸 جميع الوسائط | صور، فيديو، صوت، مستندات، ملصقات، GIF |
+| 🚫 منع التكرار | لا يُنسخ المحتوى مرتين |
+| ⚡ فوري | النسخ يتم لحظة وصول الرسالة |
+| ⚙️ أوامر تحكم | تعيين القنوات بأوامر بسيطة |
+| 📊 إحصائيات | تتبع عدد الرسائل المنسوخة |
+| 🔄 إعادة محاولة | يتعامل تلقائياً مع أخطاء FloodWait |
+| ☁️ جاهز للنشر | Render / Docker / أي خادم |
 
 ---
 
-## 🚀 التشغيل السريع
+## 🚀 إعداد سريع
 
-### 1. الحصول على بيانات API
+### 1. إنشاء البوت
+1. افتح [@BotFather](https://t.me/BotFather) في تيليجرام
+2. أرسل `/newbot`
+3. اختر اسماً ومعرفاً للبوت
+4. احفظ **BOT_TOKEN**
 
-1. توجّه إلى [my.telegram.org](https://my.telegram.org)
-2. اضغط على **API development tools**
-3. أنشئ تطبيقاً جديداً
-4. احفظ `API_ID` و `API_HASH`
+### 2. إضافة البوت للقنوات
+- **القناة المصدر:** أضف البوت مشرفاً (يكفي صلاحية القراءة)
+- **القناة الهدف:** أضف البوت مشرفاً (يحتاج صلاحية النشر)
 
-### 2. إعداد ملف البيئة
+### 3. تشغيل البوت
 
 ```bash
 cp .env.example .env
-# عدّل الملف وأضف بياناتك
-```
-
-### 3. توليد SESSION_STRING (مرة واحدة فقط)
-
-```bash
+# أضف BOT_TOKEN في ملف .env
 pip install -r requirements.txt
 python -m app.main
-# اتبع التعليمات لإدخال رقم هاتفك ورمز التحقق
-# انسخ SESSION_STRING الناتج وأضفه إلى .env
 ```
 
-### 4. التشغيل
-
-```bash
-python -m app.main
+### 4. تعيين القنوات
+في المحادثة الخاصة مع البوت:
+```
+/setsource @your_source_channel
+/setdest @your_dest_channel
 ```
 
 ---
 
-## 🐳 التشغيل بـ Docker
+## 🐳 Docker
 
 ```bash
-docker build -t telegram-cloner .
+docker build -t channel-cloner .
 docker run -d \
-  --name telegram-cloner \
-  --env-file .env \
+  -e BOT_TOKEN=your_token \
+  -e SOURCE_CHANNEL=@source \
+  -e DESTINATION_CHANNEL=@dest \
   -v $(pwd)/data:/data \
   --restart unless-stopped \
-  telegram-cloner
+  channel-cloner
 ```
 
 ---
 
-## ☁️ النشر على Render
+## ☁️ Render
 
-### النشر التلقائي
+أضف متغير واحد فقط في Render:
 
-```bash
-# تعيين المتغيرات
-export GITHUB_TOKEN=your_github_token
-export GITHUB_USERNAME=your_github_username
-export RENDER_API_KEY=your_render_api_key
-
-# رفع على GitHub
-python setup_github.py
-
-# النشر على Render
-python deploy_render.py
-```
+| المتغير | القيمة |
+|---------|--------|
+| `BOT_TOKEN` | رمز البوت من BotFather |
+| `SOURCE_CHANNEL` | @قناة_المصدر (اختياري) |
+| `DESTINATION_CHANNEL` | @قناة_الهدف (اختياري) |
 
 ---
 
-## ⚙️ متغيرات البيئة
+## 📟 الأوامر
 
-| المتغير | مطلوب | الوصف |
-|---------|-------|-------|
-| `API_ID` | ✅ | معرّف تطبيق تيليجرام |
-| `API_HASH` | ✅ | مفتاح تطبيق تيليجرام |
-| `SESSION_STRING` | ✅ | جلسة تيليجرام (Telethon) |
-| `SOURCE_CHANNEL` | ✅ | معرّف القناة المصدر |
-| `DESTINATION_CHANNEL` | ✅ | معرّف القناة الهدف |
-| `BATCH_SIZE` | ❌ | حجم الدفعة (افتراضي: 50) |
-| `DELAY_BETWEEN_MESSAGES` | ❌ | تأخير بين الرسائل بالثواني (0.5) |
-| `DELAY_BETWEEN_BATCHES` | ❌ | تأخير بين الدفعات بالثواني (2.0) |
-| `MAX_RETRIES` | ❌ | أقصى عدد محاولات (5) |
-| `RETRY_DELAY` | ❌ | تأخير إعادة المحاولة (10.0) |
-| `DB_PATH` | ❌ | مسار قاعدة البيانات (/data/cloner.db) |
-
----
-
-## 📁 هيكل المشروع
-
-```
-telegram-cloner/
-├── app/
-│   ├── main.py      — نقطة الدخول الرئيسية
-│   ├── config.py    — إدارة الإعدادات
-│   ├── sync.py      — منطق المزامنة
-│   ├── copier.py    — نسخ الرسائل والوسائط
-│   ├── database.py  — إدارة قاعدة البيانات
-│   └── logger.py    — نظام التسجيل
-├── data/            — قاعدة البيانات والسجلات (مُركّبة)
-├── requirements.txt
-├── Dockerfile
-├── render.yaml
-├── setup_github.py
-├── deploy_render.py
-├── .env.example
-└── README.md
-```
+| الأمر | الوصف |
+|-------|-------|
+| `/start` | بدء التشغيل وعرض الحالة |
+| `/setsource @channel` | تعيين القناة المصدر |
+| `/setdest @channel` | تعيين القناة الهدف |
+| `/status` | عرض الحالة الحالية |
+| `/stats` | إحصائيات النسخ |
+| `/help` | دليل الاستخدام |
 
 ---
 
 ## 📄 الترخيص
-
-MIT License — مجاني للاستخدام الشخصي والتجاري.
+MIT — مجاني للاستخدام الشخصي والتجاري.
