@@ -1,3 +1,4 @@
+import asyncio
 from telegram import Update
 from telegram.ext import ContextTypes
 from app.database import Database
@@ -15,11 +16,11 @@ def is_admin(user_id: int, config: Config) -> bool:
 # ─────────────────────────────────────────────
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     db: Database = ctx.bot_data["db"]
-    src = db.get_setting("source_channel", "❌ غير محدد")
-    dst = db.get_setting("dest_channel",   "❌ غير محدد")
+    src   = db.get_setting("source_channel", "❌ غير محدد")
+    dst   = db.get_setting("dest_channel",   "❌ غير محدد")
     stats = db.get_stats()
 
-    text = (
+    await update.message.reply_text(
         "🤖 *بوت نسخ القنوات*\n"
         "━━━━━━━━━━━━━━━━━━\n"
         f"📡 *المصدر:* `{src}`\n"
@@ -27,138 +28,173 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"📊 *الإجمالي:* {stats['total']:,} رسالة\n"
         f"📅 *اليوم:* {stats['today']:,} رسالة\n"
         "━━━━━━━━━━━━━━━━━━\n"
-        "*الأوامر:*\n"
+        "*الأوامر الرئيسية:*\n"
         "/setsource — تعيين المصدر\n"
         "/setdest — تعيين الهدف\n"
+        "/copyarchive — نسخ الأرشيف الكامل 🆕\n"
         "/status — الحالة\n"
         "/stats — الإحصائيات\n"
         "/help — المساعدة\n\n"
-        "📌 *لتعيين قناة خاصة:*\n"
-        "أضفني مشرفاً في القناة ثم أرسل فيها:\n"
-        "`/setsourceme` — لتعيينها مصدراً\n"
-        "`/setdestme` — لتعيينها هدفاً\n"
+        "📌 *للقنوات الخاصة أضفني ثم أرسل:*\n"
+        "`/setsourceme` أو `/setdestme`",
+        parse_mode="Markdown",
     )
-    await update.message.reply_text(text, parse_mode="Markdown")
 
 
 # ─────────────────────────────────────────────
-# /chatid — يظهر ID القناة أو المجموعة الحالية
+# /chatid
 # ─────────────────────────────────────────────
 async def cmd_chatid(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    msg = update.effective_message
     chat = update.effective_chat
-    chat_id = chat.id
-    title = getattr(chat, "title", None) or "خاص"
-    username = f"@{chat.username}" if getattr(chat, "username", None) else "لا يوجد"
-
-    text = (
-        f"🆔 *معرّف هذه القناة/المجموعة:*\n"
-        f"`{chat_id}`\n\n"
-        f"📛 الاسم: {title}\n"
-        f"👤 المعرف: {username}\n\n"
-        f"انسخ الرقم أعلاه واستخدمه مع:\n"
-        f"`/setsource {chat_id}`\n"
-        f"`/setdest {chat_id}`"
+    await update.effective_message.reply_text(
+        f"🆔 *معرّف هذه القناة:*\n"
+        f"`{chat.id}`\n\n"
+        f"📛 الاسم: {getattr(chat,'title','-')}\n"
+        f"👤 المعرف: {'@'+chat.username if getattr(chat,'username',None) else 'خاص'}\n\n"
+        f"استخدمه مع:\n"
+        f"`/setsource {chat.id}`\n"
+        f"`/setdest {chat.id}`",
+        parse_mode="Markdown",
     )
-    await msg.reply_text(text, parse_mode="Markdown")
 
 
 # ─────────────────────────────────────────────
-# /setsourceme — يُعيّن القناة الحالية كمصدر
+# /setsourceme  (داخل القناة)
 # ─────────────────────────────────────────────
 async def cmd_set_source_me(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     db: Database = ctx.bot_data["db"]
     chat = update.effective_chat
     chat_id = str(chat.id)
-    title = getattr(chat, "title", chat_id)
-
     db.set_setting("source_channel", chat_id)
-    logger.info(f"📡 تعيين المصدر تلقائياً: {title} ({chat_id})")
-
-    msg = update.effective_message
-    if msg:
-        await msg.reply_text(
-            f"✅ *تم تعيين هذه القناة كمصدر!*\n"
-            f"📛 {title}\n"
-            f"🆔 `{chat_id}`",
-            parse_mode="Markdown"
-        )
+    logger.info(f"📡 مصدر جديد: {getattr(chat,'title',chat_id)} ({chat_id})")
+    await update.effective_message.reply_text(
+        f"✅ *تم تعيين هذه القناة كمصدر!*\n`{chat_id}`",
+        parse_mode="Markdown",
+    )
 
 
 # ─────────────────────────────────────────────
-# /setdestme — يُعيّن القناة الحالية كهدف
+# /setdestme  (داخل القناة)
 # ─────────────────────────────────────────────
 async def cmd_set_dest_me(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     db: Database = ctx.bot_data["db"]
     chat = update.effective_chat
     chat_id = str(chat.id)
-    title = getattr(chat, "title", chat_id)
-
     db.set_setting("dest_channel", chat_id)
-    logger.info(f"📥 تعيين الهدف تلقائياً: {title} ({chat_id})")
-
-    msg = update.effective_message
-    if msg:
-        await msg.reply_text(
-            f"✅ *تم تعيين هذه القناة كهدف!*\n"
-            f"📛 {title}\n"
-            f"🆔 `{chat_id}`",
-            parse_mode="Markdown"
-        )
+    logger.info(f"📥 هدف جديد: {getattr(chat,'title',chat_id)} ({chat_id})")
+    await update.effective_message.reply_text(
+        f"✅ *تم تعيين هذه القناة كهدف!*\n`{chat_id}`",
+        parse_mode="Markdown",
+    )
 
 
 # ─────────────────────────────────────────────
-# /setsource <channel_id>
+# /setsource <id>
 # ─────────────────────────────────────────────
 async def cmd_set_source(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     db: Database = ctx.bot_data["db"]
-    config: Config = ctx.bot_data["config"]
-
-    if not is_admin(update.effective_user.id, config):
-        await update.message.reply_text("⛔ ليس لديك صلاحية.")
-        return
-
     if not ctx.args:
         await update.message.reply_text(
-            "📌 *الاستخدام:*\n"
-            "`/setsource -1001234567890`\n\n"
-            "أو أضفني في القناة وأرسل فيها:\n"
-            "`/setsourceme`",
+            "📌 `/setsource -1001234567890`\n"
+            "أو أرسل `/setsourceme` داخل القناة.",
             parse_mode="Markdown",
         )
         return
-
-    channel = ctx.args[0].strip()
-    db.set_setting("source_channel", channel)
-    logger.info(f"📡 تم تعيين المصدر: {channel}")
-    await update.message.reply_text(f"✅ تم تعيين القناة المصدر:\n`{channel}`", parse_mode="Markdown")
+    ch = ctx.args[0].strip()
+    db.set_setting("source_channel", ch)
+    await update.message.reply_text(f"✅ المصدر: `{ch}`", parse_mode="Markdown")
 
 
 # ─────────────────────────────────────────────
-# /setdest <channel_id>
+# /setdest <id>
 # ─────────────────────────────────────────────
 async def cmd_set_dest(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     db: Database = ctx.bot_data["db"]
-    config: Config = ctx.bot_data["config"]
+    if not ctx.args:
+        await update.message.reply_text(
+            "📌 `/setdest -1001234567890`\n"
+            "أو أرسل `/setdestme` داخل القناة.",
+            parse_mode="Markdown",
+        )
+        return
+    ch = ctx.args[0].strip()
+    db.set_setting("dest_channel", ch)
+    await update.message.reply_text(f"✅ الهدف: `{ch}`", parse_mode="Markdown")
 
-    if not is_admin(update.effective_user.id, config):
+
+# ─────────────────────────────────────────────
+# /copyarchive — نسخ الأرشيف الكامل
+# ─────────────────────────────────────────────
+async def cmd_copy_archive(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    db: Database     = ctx.bot_data["db"]
+    config: Config   = ctx.bot_data["config"]
+    user_id = update.effective_user.id
+
+    if not is_admin(user_id, config):
         await update.message.reply_text("⛔ ليس لديك صلاحية.")
         return
 
-    if not ctx.args:
+    src = db.get_setting("source_channel")
+    dst = db.get_setting("dest_channel")
+
+    if not src or not dst:
         await update.message.reply_text(
-            "📌 *الاستخدام:*\n"
-            "`/setdest -1001234567890`\n\n"
-            "أو أضفني في القناة وأرسل فيها:\n"
-            "`/setdestme`",
+            "❌ لم تُعيَّن القنوات بعد!\n"
+            "أرسل `/setsourceme` في المصدر و `/setdestme` في الهدف.",
             parse_mode="Markdown",
         )
         return
 
-    channel = ctx.args[0].strip()
-    db.set_setting("dest_channel", channel)
-    logger.info(f"📥 تم تعيين الهدف: {channel}")
-    await update.message.reply_text(f"✅ تم تعيين القناة الهدف:\n`{channel}`", parse_mode="Markdown")
+    # هل يعمل بالفعل؟
+    if ctx.bot_data.get("archive_running"):
+        await update.message.reply_text("⚠️ نسخ الأرشيف جارٍ بالفعل! انتظر حتى ينتهي.")
+        return
+
+    # حد أقصى مخصص؟
+    max_id = 50000
+    if ctx.args:
+        try:
+            max_id = int(ctx.args[0])
+        except ValueError:
+            pass
+
+    await update.message.reply_text(
+        f"🚀 *بدأ نسخ الأرشيف!*\n"
+        f"📡 المصدر: `{src}`\n"
+        f"📥 الهدف: `{dst}`\n"
+        f"🔢 حتى ID: `{max_id}`\n\n"
+        f"ستصلك تقارير تقدم كل 200 رسالة.",
+        parse_mode="Markdown",
+    )
+
+    # تشغيل في الخلفية
+    async def run_archive():
+        from app.archiver import copy_archive
+        ctx.bot_data["archive_running"] = True
+        try:
+            await copy_archive(
+                bot=ctx.bot,
+                source_channel=src,
+                dest_channel=dst,
+                db=db,
+                status_chat_id=update.effective_chat.id,
+                max_id=max_id,
+            )
+        finally:
+            ctx.bot_data["archive_running"] = False
+
+    asyncio.create_task(run_archive())
+
+
+# ─────────────────────────────────────────────
+# /stoparchive — إيقاف النسخ
+# ─────────────────────────────────────────────
+async def cmd_stop_archive(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if ctx.bot_data.get("archive_running"):
+        ctx.bot_data["archive_running"] = False
+        await update.message.reply_text("🛑 جارٍ إيقاف النسخ...")
+    else:
+        await update.message.reply_text("ℹ️ لا يوجد نسخ جارٍ حالياً.")
 
 
 # ─────────────────────────────────────────────
@@ -168,17 +204,15 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     db: Database = ctx.bot_data["db"]
     src = db.get_setting("source_channel", "❌ غير محدد")
     dst = db.get_setting("dest_channel",   "❌ غير محدد")
-
-    src_ok = "❌" not in src
-    dst_ok = "❌" not in dst
-    ready  = "🟢 يعمل" if (src_ok and dst_ok) else "🔴 يحتاج إعداد"
+    archiving = "🔄 جارٍ" if ctx.bot_data.get("archive_running") else "⏸️ متوقف"
 
     await update.message.reply_text(
         f"📊 *حالة البوت*\n"
         f"━━━━━━━━━━━━━━\n"
-        f"الحالة: {ready}\n"
         f"📡 المصدر: `{src}`\n"
-        f"📥 الهدف: `{dst}`",
+        f"📥 الهدف: `{dst}`\n"
+        f"📚 نسخ الأرشيف: {archiving}\n"
+        f"🟢 البوت: يعمل",
         parse_mode="Markdown",
     )
 
@@ -205,26 +239,26 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "📖 *دليل الاستخدام*\n"
         "━━━━━━━━━━━━━━━━━━\n\n"
-        "*الطريقة السهلة (قنوات خاصة):*\n"
-        "1️⃣ أضفني مشرفاً في القناة المصدر\n"
-        "2️⃣ أرسل في تلك القناة: `/setsourceme`\n"
-        "3️⃣ أضفني مشرفاً في القناة الهدف\n"
-        "4️⃣ أرسل في تلك القناة: `/setdestme`\n"
-        "5️⃣ البوت يعمل تلقائياً! 🚀\n\n"
-        "*الطريقة اليدوية (إذا عرفت الـ ID):*\n"
-        "`/setsource -1001234567890`\n"
-        "`/setdest -1001234567891`\n\n"
-        "*معرفة ID أي قناة:*\n"
-        "أضفني فيها وأرسل: `/chatid`\n\n"
-        "*الوسائط المدعومة:*\n"
-        "🖼 صور | 🎥 فيديو | 🎵 صوت\n"
-        "🎤 رسائل صوتية | 📄 ملفات | 🎭 ملصقات\n",
+        "*🔧 إعداد القنوات:*\n"
+        "أضف البوت مشرفاً في القناتين، ثم:\n"
+        "`/setsourceme` — في قناة المصدر\n"
+        "`/setdestme` — في قناة الهدف\n\n"
+        "*📚 نسخ الأرشيف القديم:*\n"
+        "`/copyarchive` — يبدأ نسخ كل الرسائل\n"
+        "`/copyarchive 10000` — حتى ID محدد\n"
+        "`/stoparchive` — إيقاف النسخ\n\n"
+        "*📡 مزامنة مباشرة:*\n"
+        "تلقائية — كل رسالة جديدة تُنسخ فوراً\n\n"
+        "*ℹ️ أوامر أخرى:*\n"
+        "`/status` — الحالة\n"
+        "`/stats` — الإحصائيات\n"
+        "`/chatid` — معرف القناة الحالية\n",
         parse_mode="Markdown",
     )
 
 
 # ─────────────────────────────────────────────
-# معالج رسائل القنوات
+# معالج رسائل القنوات (مزامنة مباشرة)
 # ─────────────────────────────────────────────
 async def handle_channel_post(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     db: Database = ctx.bot_data["db"]
@@ -232,22 +266,18 @@ async def handle_channel_post(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not msg:
         return
 
-    # تجاهل أوامر التعيين (تُعالَج بشكل منفصل)
     if msg.text and msg.text.startswith("/"):
         return
 
-    source_channel = db.get_setting("source_channel")
-    dest_channel   = db.get_setting("dest_channel")
-
-    if not source_channel or not dest_channel:
+    src = db.get_setting("source_channel")
+    dst = db.get_setting("dest_channel")
+    if not src or not dst:
         return
 
     chat_id  = str(msg.chat_id)
     username = f"@{msg.chat.username}" if msg.chat.username else None
-
-    is_source = (chat_id == source_channel) or (username and username == source_channel)
-    if not is_source:
+    if chat_id != src and username != src:
         return
 
     logger.info(f"📨 رسالة جديدة {msg.message_id} من {chat_id}")
-    await copy_message_to_channel(ctx.bot, msg, dest_channel, db)
+    await copy_message_to_channel(ctx.bot, msg, dst, db)
