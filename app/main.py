@@ -17,6 +17,7 @@ from app.handlers import (
     cmd_start, cmd_chatid,
     cmd_set_source, cmd_set_dest,
     cmd_set_source_me, cmd_set_dest_me,
+    cmd_copy_archive, cmd_stop_archive,
     cmd_status, cmd_stats, cmd_help,
     handle_channel_post,
 )
@@ -41,24 +42,23 @@ def start_health_server(port: int):
             self.wfile.write("🤖 البوت يعمل\n".encode())
         def log_message(self, *a): pass
 
-    server = HTTPServer(("0.0.0.0", port), Handler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    logger.info(f"🌐 خادم الصحة يعمل على البورت {port}")
+    threading.Thread(
+        target=HTTPServer(("0.0.0.0", port), Handler).serve_forever,
+        daemon=True,
+    ).start()
+    logger.info(f"🌐 Health server على البورت {port}")
 
 
 def print_banner():
-    logger.info("╔══════════════════════════════════════════╗")
-    logger.info("║   🤖  بوت نسخ القنوات — Channel Cloner  ║")
-    logger.info("║   النسخة 3.1 | Bot API | مجاني 100٪     ║")
-    logger.info("╚══════════════════════════════════════════╝")
+    logger.info("╔══════════════════════════════════════════════╗")
+    logger.info("║  🤖  بوت نسخ القنوات v3.2 | مع الأرشيف     ║")
+    logger.info("╚══════════════════════════════════════════════╝")
 
 
 def main():
     load_env()
     print_banner()
-
-    port = int(os.getenv("PORT", "10000"))
-    start_health_server(port)
+    start_health_server(int(os.getenv("PORT", "10000")))
 
     try:
         config = Config.from_env()
@@ -67,39 +67,39 @@ def main():
         sys.exit(1)
 
     db = Database(config.db_path)
-
     if config.source_channel:
         db.set_setting("source_channel", config.source_channel)
-        logger.info(f"📡 المصدر: {config.source_channel}")
     if config.destination_channel:
         db.set_setting("dest_channel", config.destination_channel)
-        logger.info(f"📥 الهدف: {config.destination_channel}")
 
     app = Application.builder().token(config.bot_token).build()
-    app.bot_data["db"]     = db
-    app.bot_data["config"] = config
+    app.bot_data["db"]              = db
+    app.bot_data["config"]          = config
+    app.bot_data["archive_running"] = False
 
-    # أوامر الخاص
-    app.add_handler(CommandHandler("start",       cmd_start))
-    app.add_handler(CommandHandler("chatid",      cmd_chatid))
-    app.add_handler(CommandHandler("setsource",   cmd_set_source))
-    app.add_handler(CommandHandler("setdest",     cmd_set_dest))
-    app.add_handler(CommandHandler("status",      cmd_status))
-    app.add_handler(CommandHandler("stats",       cmd_stats))
-    app.add_handler(CommandHandler("help",        cmd_help))
+    ch = filters.ChatType.CHANNEL
 
-    # أوامر داخل القنوات — تعيين تلقائي
-    channel_filter = filters.ChatType.CHANNEL
-    app.add_handler(CommandHandler("setsourceme", cmd_set_source_me, filters=channel_filter))
-    app.add_handler(CommandHandler("setdestme",   cmd_set_dest_me,   filters=channel_filter))
-    app.add_handler(CommandHandler("chatid",      cmd_chatid,        filters=channel_filter))
+    # أوامر الخاص والعام
+    app.add_handler(CommandHandler("start",        cmd_start))
+    app.add_handler(CommandHandler("help",         cmd_help))
+    app.add_handler(CommandHandler("chatid",       cmd_chatid))
+    app.add_handler(CommandHandler("setsource",    cmd_set_source))
+    app.add_handler(CommandHandler("setdest",      cmd_set_dest))
+    app.add_handler(CommandHandler("copyarchive",  cmd_copy_archive))
+    app.add_handler(CommandHandler("stoparchive",  cmd_stop_archive))
+    app.add_handler(CommandHandler("status",       cmd_status))
+    app.add_handler(CommandHandler("stats",        cmd_stats))
 
-    # رسائل القنوات العادية
-    app.add_handler(MessageHandler(channel_filter, handle_channel_post))
+    # أوامر داخل القنوات
+    app.add_handler(CommandHandler("setsourceme",  cmd_set_source_me, filters=ch))
+    app.add_handler(CommandHandler("setdestme",    cmd_set_dest_me,   filters=ch))
+    app.add_handler(CommandHandler("chatid",       cmd_chatid,        filters=ch))
 
-    src = db.get_setting("source_channel", "غير محدد")
-    dst = db.get_setting("dest_channel",   "غير محدد")
-    logger.info(f"📡 المصدر: {src} | 📥 الهدف: {dst}")
+    # رسائل القنوات (مزامنة مباشرة)
+    app.add_handler(MessageHandler(ch, handle_channel_post))
+
+    logger.info(f"📡 المصدر: {db.get_setting('source_channel','غير محدد')}")
+    logger.info(f"📥 الهدف:  {db.get_setting('dest_channel','غير محدد')}")
     logger.info("🚀 البوت يعمل...")
 
     app.run_polling(
