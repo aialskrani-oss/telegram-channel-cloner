@@ -4,6 +4,7 @@ from telegram.ext import ContextTypes
 from app.database import Database
 from app.config import Config
 from app.copier import copy_message_to_channel
+from app.media_group import handle_media_group_message
 from app.logger import logger
 
 
@@ -294,5 +295,12 @@ async def handle_channel_post(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if chat_id != src and username != src:
         return
 
-    logger.info(f"📨 رسالة جديدة {msg.message_id} من {chat_id}")
+    # ── ألبوم (مجموعة وسائط) ──────────────────────────────
+    if msg.media_group_id:
+        logger.info(f"📦 ألبوم {msg.media_group_id} | رسالة {msg.message_id}")
+        await handle_media_group_message(ctx.bot, msg, dst, db)
+        return
+
+    # ── رسالة عادية (صورة / فيديو / نص / ...) ────────────
+    logger.info(f"📨 رسالة {msg.message_id} من {chat_id}")
     await copy_message_to_channel(ctx.bot, msg, dst, db)
