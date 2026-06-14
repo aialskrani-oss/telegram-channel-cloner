@@ -1,136 +1,84 @@
 import asyncio
-from typing import Optional
-from telethon import TelegramClient
-from telethon.tl.types import (
-    Message, MessageMediaPhoto, MessageMediaDocument,
-    MessageMediaWebPage, InputChannel
-)
-from telethon.errors import (
-    FloodWaitError, ChatWriteForbiddenError,
-    ChannelPrivateError, MediaEmptyError, FileReferenceExpiredError
-)
-from app.logger import logger
+from telegram import Bot, Message
+from telegram.error import TelegramError, RetryAfter, BadRequest
 from app.database import Database
-from app.config import Config
+from app.logger import logger
 
 
-def _get_message_type(msg: Message) -> str:
-    if msg.photo:
-        return "photo"
-    if msg.video:
-        return "video"
-    if msg.audio:
-        return "audio"
-    if msg.voice:
-        return "voice"
-    if msg.document:
-        return "document"
-    if msg.sticker:
-        return "sticker"
-    if msg.gif:
-        return "gif"
-    if msg.text:
-        return "text"
-    return "unknown"
+async def copy_message_to_channel(
+    bot: Bot,
+    message: Message,
+    dest_chat_id: str,
+    db: Database,
+) -> bool:
+    source_chat = str(message.chat_id)
+    msg_id = message.message_id
 
+    if db.is_copied(source_chat, msg_id, dest_chat_id):
+        logger.debug(f"⏭️ الرسالة {msg_id} منسوخة مسبقاً")
+        return True
 
-class MessageCopier:
-    def __init__(self, client: TelegramClient, config: Config, db: Database):
-        self.client = client
-        self.config = config
-        self.db = db
-
-    async def copy_message(self, msg: Message, source_entity, dest_entity) -> bool:
-        if self.db.is_message_copied(msg.id, str(source_entity.id), str(dest_entity.id)):
-            logger.debug(f"⏭️  الرسالة {msg.id} منسوخة مسبقاً، تخطي...")
+    for attempt in range(1, 6):
+        try:
+            sent = await _do_copy(bot, message, dest_chat_id)
+            dest_id = sent.message_id if sent else None
+            db.mark_copied(source_chat, msg_id, dest_chat_id, dest_id)
+            logger.info(f"✅ نُسخت الرسالة {msg_id} ← {dest_id}")
             return True
 
-        msg_type = _get_message_type(msg)
-        source_id = str(source_entity.id)
-        dest_id = str(dest_entity.id)
+        except RetryAfter as e:
+            logger.warning(f"⚠️ FloodWait {e.retry_after}ث ...")
+            await asyncio.sleep(e.retry_after + 1)
 
-        for attempt in range(1, self.config.max_retries + 1):
-            try:
-                sent = await self._do_copy(msg, dest_entity)
-                if sent:
-                    self.db.save_message(msg.id, sent.id, source_id, dest_id, msg_type, "success")
-                    logger.debug(f"✅ نُسخت الرسالة {msg.id} ({msg_type}) → {sent.id}")
-                    return True
-                else:
-                    self.db.save_message(msg.id, None, source_id, dest_id, msg_type, "skipped")
-                    return True
+        except BadRequest as e:
+            logger.error(f"❌ BadRequest للرسالة {msg_id}: {e}")
+            db.mark_copied(source_chat, msg_id, dest_chat_id, None)
+            return False
 
-            except FloodWaitError as e:
-                wait = e.seconds + 5
-                logger.warning(f"⚠️  FloodWait {wait}ث للرسالة {msg.id}. الانتظار...")
+        except TelegramError as e:
+            if attempt < 5:
+                wait = attempt * 3
+                logger.warning(f"⚠️ محاولة {attempt}/5 للرسالة {msg_id}: {e} — انتظار {wait}ث")
                 await asyncio.sleep(wait)
-
-            except (ChatWriteForbiddenError, ChannelPrivateError) as e:
-                logger.error(f"❌ خطأ في الصلاحيات: {e}")
-                self.db.save_message(msg.id, None, source_id, dest_id, msg_type, "failed", str(e))
+            else:
+                logger.error(f"❌ فشل نسخ الرسالة {msg_id} بعد 5 محاولات: {e}")
                 return False
 
-            except (MediaEmptyError, FileReferenceExpiredError) as e:
-                logger.warning(f"⚠️  خطأ في الوسائط للرسالة {msg.id}: {e}. محاولة إرسال النص فقط...")
-                try:
-                    if msg.text:
-                        sent = await self.client.send_message(dest_entity, msg.text)
-                        self.db.save_message(msg.id, sent.id, source_id, dest_id, "text_fallback", "success")
-                        return True
-                except Exception as inner:
-                    logger.error(f"❌ فشل إرسال النص البديل: {inner}")
-                self.db.save_message(msg.id, None, source_id, dest_id, msg_type, "failed", str(e))
-                return False
+    return False
 
-            except Exception as e:
-                if attempt < self.config.max_retries:
-                    logger.warning(f"⚠️  محاولة {attempt}/{self.config.max_retries} للرسالة {msg.id} فشلت: {e}")
-                    await asyncio.sleep(self.config.retry_delay * attempt)
-                else:
-                    logger.error(f"❌ فشلت الرسالة {msg.id} بعد {self.config.max_retries} محاولات: {e}")
-                    self.db.save_message(msg.id, None, source_id, dest_id, msg_type, "failed", str(e))
-                    return False
 
-        return False
+async def _do_copy(bot: Bot, msg: Message, dest: str) -> Message:
+    caption = msg.caption_html if msg.caption else None
+    parse_mode = "HTML"
 
-    async def _do_copy(self, msg: Message, dest_entity) -> Optional[Message]:
-        if not msg.media and not msg.text:
-            return None
+    if msg.photo:
+        return await bot.send_photo(dest, msg.photo[-1].file_id, caption=caption, parse_mode=parse_mode)
 
-        if msg.media and not isinstance(msg.media, MessageMediaWebPage):
-            return await self.client.send_file(
-                dest_entity,
-                file=msg.media,
-                caption=msg.text or "",
-                parse_mode="html",
-                voice_note=bool(msg.voice),
-                video_note=bool(msg.video_note),
-                force_document=isinstance(msg.media, MessageMediaDocument) and not msg.gif and not msg.video,
-            )
+    if msg.video:
+        return await bot.send_video(dest, msg.video.file_id, caption=caption, parse_mode=parse_mode)
 
-        if msg.text:
-            return await self.client.send_message(
-                dest_entity,
-                msg.text,
-                parse_mode="html",
-                link_preview=isinstance(msg.media, MessageMediaWebPage),
-            )
+    if msg.audio:
+        return await bot.send_audio(dest, msg.audio.file_id, caption=caption, parse_mode=parse_mode)
 
-        return None
+    if msg.voice:
+        return await bot.send_voice(dest, msg.voice.file_id, caption=caption, parse_mode=parse_mode)
 
-    async def retry_failed(self, source_entity, dest_entity):
-        failed = self.db.get_failed_messages(
-            str(source_entity.id), str(dest_entity.id), self.config.max_retries
-        )
-        if not failed:
-            return
+    if msg.document:
+        return await bot.send_document(dest, msg.document.file_id, caption=caption, parse_mode=parse_mode)
 
-        logger.info(f"🔄 إعادة محاولة {len(failed)} رسالة فاشلة...")
-        for row in failed:
-            try:
-                msg = await self.client.get_messages(source_entity, ids=row["source_message_id"])
-                if msg:
-                    await self.copy_message(msg, source_entity, dest_entity)
-                    await asyncio.sleep(self.config.delay_between_messages)
-            except Exception as e:
-                logger.error(f"❌ فشل إعادة المحاولة للرسالة {row['source_message_id']}: {e}")
+    if msg.video_note:
+        return await bot.send_video_note(dest, msg.video_note.file_id)
+
+    if msg.sticker:
+        return await bot.send_sticker(dest, msg.sticker.file_id)
+
+    if msg.animation:
+        return await bot.send_animation(dest, msg.animation.file_id, caption=caption, parse_mode=parse_mode)
+
+    if msg.text:
+        return await bot.send_message(dest, msg.text_html, parse_mode=parse_mode)
+
+    if msg.poll and not msg.poll.is_anonymous is False:
+        return await bot.forward_message(dest, msg.chat_id, msg.message_id)
+
+    return await bot.forward_message(dest, msg.chat_id, msg.message_id)
