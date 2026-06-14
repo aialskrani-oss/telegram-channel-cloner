@@ -19,4 +19,9 @@ RUN mkdir -p /data
 
 VOLUME ["/data"]
 
+EXPOSE 10000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:10000')" || exit 1
+
 CMD ["python", "-m", "app.main"]
