@@ -1,6 +1,6 @@
 import sqlite3
 import os
-from typing import Optional
+from typing import Optional, List
 from app.logger import logger
 
 
@@ -14,6 +14,7 @@ class Database:
         conn = sqlite3.connect(self.db_path, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
         return conn
 
     def _init_db(self):
@@ -23,7 +24,6 @@ class Database:
                     key   TEXT PRIMARY KEY,
                     value TEXT NOT NULL
                 );
-
                 CREATE TABLE IF NOT EXISTS copied_messages (
                     id              INTEGER PRIMARY KEY AUTOINCREMENT,
                     source_chat_id  TEXT NOT NULL,
@@ -37,21 +37,18 @@ class Database:
                     copied_at       TEXT NOT NULL DEFAULT (datetime('now')),
                     UNIQUE(source_chat_id, source_msg_id, dest_chat_id)
                 );
-
                 CREATE INDEX IF NOT EXISTS idx_msg_id
                     ON copied_messages(source_chat_id, source_msg_id);
-
                 CREATE INDEX IF NOT EXISTS idx_file_id
                     ON copied_messages(media_file_id, dest_chat_id)
                     WHERE media_file_id IS NOT NULL;
-
                 CREATE INDEX IF NOT EXISTS idx_text_hash
                     ON copied_messages(text_hash, dest_chat_id)
                     WHERE text_hash IS NOT NULL;
             """)
         logger.info("✅ قاعدة البيانات جاهزة")
 
-    # ── settings ───────────────────────────────────────────────
+    # ── settings ────────────────────────────────────────────
     def get_setting(self, key: str, default: Optional[str] = None) -> Optional[str]:
         with self._conn() as conn:
             row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
@@ -65,9 +62,51 @@ class Database:
                 (key, value),
             )
 
-    # ── deduplication checks ────────────────────────────────────
+    # ── multi-source channels ────────────────────────────────
+    def get_source_channels(self) -> List[str]:
+        val = self.get_setting("source_channels", "")
+        return [c.strip() for c in val.split(",") if c.strip()] if val else []
+
+    def add_source_channel(self, channel_id: str) -> bool:
+        channels = self.get_source_channels()
+        if channel_id in channels:
+            return False
+        channels.append(channel_id)
+        self.set_setting("source_channels", ",".join(channels))
+        return True
+
+    def remove_source_channel(self, channel_id: str) -> bool:
+        channels = self.get_source_channels()
+        if channel_id not in channels:
+            return False
+        channels.remove(channel_id)
+        self.set_setting("source_channels", ",".join(channels))
+        return True
+
+    def get_dest_channel(self) -> Optional[str]:
+        return self.get_setting("dest_channel")
+
+    # ── content filter ───────────────────────────────────────
+    ALL_TYPES = {"photo", "video", "audio", "voice", "document",
+                 "sticker", "animation", "video_note", "text"}
+
+    def get_filter(self) -> List[str]:
+        val = self.get_setting("filter_types", "")
+        if not val:
+            return []  # فارغ = كل الأنواع
+        return [t.strip() for t in val.split(",") if t.strip()]
+
+    def set_filter(self, types: List[str]):
+        self.set_setting("filter_types", ",".join(types))
+
+    def is_type_allowed(self, msg_type: str) -> bool:
+        allowed = self.get_filter()
+        if not allowed:
+            return True  # بدون فلتر = كل شيء مسموح
+        return msg_type in allowed
+
+    # ── deduplication ────────────────────────────────────────
     def is_msg_copied(self, source_chat: str, source_msg_id: int, dest_chat: str) -> bool:
-        """تحقق من نسخ الرسالة بناءً على رقمها."""
         with self._conn() as conn:
             row = conn.execute(
                 "SELECT id FROM copied_messages"
@@ -77,7 +116,6 @@ class Database:
             return row is not None
 
     def is_file_copied(self, file_id: str, dest_chat: str) -> bool:
-        """تحقق من نسخ نفس الملف (فيديو/صورة/مستند) بناءً على file_id."""
         if not file_id:
             return False
         with self._conn() as conn:
@@ -89,7 +127,6 @@ class Database:
             return row is not None
 
     def is_text_copied(self, text_hash: str, dest_chat: str) -> bool:
-        """تحقق من نسخ نفس النص بناءً على hash."""
         if not text_hash:
             return False
         with self._conn() as conn:
@@ -100,33 +137,23 @@ class Database:
             ).fetchone()
             return row is not None
 
-    # الدالة القديمة للتوافق مع الأرشيف
     def is_copied(self, source_chat: str, source_msg_id: int, dest_chat: str) -> bool:
         return self.is_msg_copied(source_chat, source_msg_id, dest_chat)
 
-    # ── write ───────────────────────────────────────────────────
-    def mark_copied(
-        self,
-        source_chat: str,
-        source_msg_id: int,
-        dest_chat: str,
-        dest_msg_id: Optional[int],
-        media_file_id: Optional[str] = None,
-        text_hash: Optional[str] = None,
-        msg_type: str = "unknown",
-    ):
+    def mark_copied(self, source_chat, source_msg_id, dest_chat, dest_msg_id,
+                    media_file_id=None, text_hash=None, msg_type="unknown"):
         with self._conn() as conn:
             conn.execute(
-                """INSERT INTO copied_messages
-                   (source_chat_id, source_msg_id, dest_chat_id,
-                    dest_msg_id, media_file_id, text_hash, msg_type)
-                   VALUES (?,?,?,?,?,?,?)
-                   ON CONFLICT DO NOTHING""",
-                (source_chat, source_msg_id, dest_chat,
-                 dest_msg_id, media_file_id, text_hash, msg_type),
+                "INSERT INTO copied_messages"
+                "(source_chat_id,source_msg_id,dest_chat_id,dest_msg_id,"
+                "media_file_id,text_hash,msg_type)"
+                " VALUES(?,?,?,?,?,?,?)"
+                " ON CONFLICT DO NOTHING",
+                (source_chat, source_msg_id, dest_chat, dest_msg_id,
+                 media_file_id, text_hash, msg_type),
             )
 
-    # ── stats ───────────────────────────────────────────────────
+    # ── stats ────────────────────────────────────────────────
     def get_stats(self) -> dict:
         with self._conn() as conn:
             total = conn.execute(
@@ -138,7 +165,7 @@ class Database:
             ).fetchone()["c"]
             by_type = conn.execute(
                 "SELECT msg_type, COUNT(*) as c FROM copied_messages"
-                " WHERE status='success' GROUP BY msg_type ORDER BY c DESC LIMIT 6"
+                " WHERE status='success' GROUP BY msg_type ORDER BY c DESC LIMIT 8"
             ).fetchall()
             return {
                 "total": total,
