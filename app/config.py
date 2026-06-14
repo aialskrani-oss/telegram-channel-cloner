@@ -18,8 +18,8 @@ class Config:
             raise ValueError("❌ متغير BOT_TOKEN مفقود! احصل عليه من @BotFather")
 
         source = os.getenv("SOURCE_CHANNEL", "").strip() or None
-        dest = os.getenv("DESTINATION_CHANNEL", "").strip() or None
-        db_path = os.getenv("DB_PATH", "/data/cloner.db")
+        dest   = os.getenv("DESTINATION_CHANNEL", "").strip() or None
+        db_path = os.getenv("DB_PATH", "/tmp/cloner.db")
         admin_ids_str = os.getenv("ADMIN_IDS", "")
         admin_ids = [int(x.strip()) for x in admin_ids_str.split(",") if x.strip().lstrip("-").isdigit()]
 
