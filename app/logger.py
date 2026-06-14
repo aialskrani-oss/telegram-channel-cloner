@@ -1,30 +1,27 @@
 import logging
 import sys
-from datetime import datetime
+import os
 
 
-def setup_logger(name: str = "telegram-cloner") -> logging.Logger:
+def setup_logger(name: str = "channel-cloner") -> logging.Logger:
     logger = logging.getLogger(name)
     logger.setLevel(logging.DEBUG)
-
     if logger.handlers:
         return logger
 
-    formatter = logging.Formatter(
-        fmt="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S"
+    fmt = logging.Formatter(
+        "%(asctime)s | %(levelname)-8s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
     )
-
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(logging.DEBUG)
-    console_handler.setFormatter(formatter)
-    logger.addHandler(console_handler)
+    ch = logging.StreamHandler(sys.stdout)
+    ch.setFormatter(fmt)
+    logger.addHandler(ch)
 
     try:
-        file_handler = logging.FileHandler("/data/cloner.log", encoding="utf-8")
-        file_handler.setLevel(logging.DEBUG)
-        file_handler.setFormatter(formatter)
-        logger.addHandler(file_handler)
+        os.makedirs("/data", exist_ok=True)
+        fh = logging.FileHandler("/data/cloner.log", encoding="utf-8")
+        fh.setFormatter(fmt)
+        logger.addHandler(fh)
     except Exception:
         pass
 
